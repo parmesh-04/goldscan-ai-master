@@ -1,5 +1,9 @@
 """
-Vision analysis module using Gemini.
+Vision Analysis Engine (Gemini 1.5)
+This module interfaces with Google Gemini to perform high-fidelity visual 
+assessment of jewelry. It doesn't just "look" at the gold; it performs a 
+multi-point inspection including hallmark OCR, color consistency checks, 
+and plating detection.
 
 CRITICAL SAFETY RULES:
 - FALLBACK_VISION_RESULT must NEVER default to valid gold
@@ -14,6 +18,7 @@ from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
 
+# Load API key and initialize Gemini client
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 _genai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 

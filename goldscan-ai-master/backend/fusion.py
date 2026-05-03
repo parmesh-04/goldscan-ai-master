@@ -1,3 +1,8 @@
+# Bayesian Fusion Engine
+# This module is the "brain" of GoldScan AI. It takes noisy signals from multiple
+# sources (Vision, Audio, OCR, User Declarations) and combines them into a 
+# high-confidence final decision using a probabilistic approach.
+
 PURITY_FACTOR = {
     "24K": 1.000, "22K": 0.916,
     "18K": 0.750, "14K": 0.585,
@@ -13,8 +18,10 @@ MAKING_CHARGE_DEDUCTION = 0.93
 
 def _calculate_loan_eligibility(weight_result, purity_estimate):
     """
-    Calculate INR loan eligibility from weight and purity.
-    Returns {min, max} or None if item is not eligible.
+    Core Financial Logic:
+    Calculates eligible loan amount based on RBI LTV guidelines (75%).
+    We deduct industry-standard 7% for making charges and round to the nearest 500
+    to follow typical NBFC disbursement patterns.
     """
     if weight_result is None:
         return None

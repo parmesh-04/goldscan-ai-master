@@ -1,3 +1,13 @@
+/*
+  NBFC Dashboard: The "Lender Side" of GoldScan AI.
+  This is where loan officers see incoming remote applications.
+  Key Features:
+  - Real-time queue of scanned items.
+  - Signal Decomposition: See WHY the AI made a decision (Visual vs Audio vs Hallmark).
+  - Risk Flagging: Immediate visual alerts for potential fraud.
+  - LOS Integration: One-click "Approve & Send" to Loan Origination Systems.
+*/
+
 import { BarChart3, CheckCircle2, Download, Gem, Pencil, Search, Settings, ShieldAlert, SlidersHorizontal, Trash2, TrendingUp, X } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';

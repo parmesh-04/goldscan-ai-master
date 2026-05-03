@@ -1,3 +1,7 @@
+# GoldScan AI Backend - FastAPI Core
+# This file handles the main API endpoints, input validation, and coordinates
+# between the Vision AI (Gemini), Weight Estimation, and the Bayesian Fusion Engine.
+
 import traceback
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +13,8 @@ from weight import estimate_weight
 
 app = FastAPI(title="GoldScan AI Backend", version="2.0.0")
 
+# SECURITY: Enable CORS so our Vite frontend can securely talk to this API
+# during local development and production.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -49,6 +55,13 @@ async def analyze(
     self_reported_weight: str = Form(""),
     audio_performed: str = Form("false"),  # Frontend must explicitly say if audio was done
 ):
+    """
+    Main Analysis Endpoint:
+    1. Validates the incoming image and form data.
+    2. Calls Gemini Vision to extract metadata from the image.
+    3. Estimates weight based on jewelry type and visual scale.
+    4. Runs the Fusion Engine to calculate final risk and loan eligibility.
+    """
     # ── INPUT VALIDATION ──────────────────────────────────
 
     # 1. MIME type check
@@ -108,6 +121,7 @@ async def analyze(
     audio_was_performed = audio_performed.lower() in ("true", "1", "yes")
 
     # ── DECLARATIONS OBJECT ───────────────────────────────
+    # Store what the customer claimed so we can cross-reference it with AI findings.
     declarations = {
         "jewelryType": jewelry_type_clean,
         "declaredKarat": declared_karat_clean,
@@ -115,6 +129,7 @@ async def analyze(
     }
 
     # ── VISION ANALYSIS ───────────────────────────────────
+    # Send the image to Gemini 1.5 Pro/Flash for deep visual inspection.
     try:
         vision = await analyze_image(
             image_bytes, 
@@ -158,6 +173,8 @@ async def analyze(
     )
 
     # ── FUSION ENGINE ─────────────────────────────────────
+    # authorative step: combine visual evidence + audio + declarations.
+    # If vision says 14K but user says 22K, fusion will spike the risk score.
     try:
         fusion = run_fusion_engine(vision, audio, weight, declarations)
     except Exception as e:

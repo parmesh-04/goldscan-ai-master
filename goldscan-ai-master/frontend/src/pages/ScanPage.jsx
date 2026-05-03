@@ -6,6 +6,15 @@ import ScanRightPanel from './scan/ScanRightPanel.jsx';
 import { Step1Upload, Step2Audio, Step3Declare, Step4Analysis } from './scan/ScanSteps.jsx';
 import { recognizeBillText } from '../utils/geminiClient.js';
 
+/* 
+  ScanPage: The core "User Journey" for gold assessment.
+  This component orchestrates a 4-step wizard:
+  1. Camera: Capture jewelry from 5+ angles.
+  2. Audio: Capture the "ping" resonance (TenzorX unique feature).
+  3. Declare: Customer provides their identity, location, and asset details.
+  4. Analysis: Real-time progress bar while backend AI does the heavy lifting.
+*/
+
 const ANALYSIS_STEPS = [
   'Images received & quality verified',
   'Background removed & normalized',

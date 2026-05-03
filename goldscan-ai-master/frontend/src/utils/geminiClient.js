@@ -1,3 +1,10 @@
+/*
+  Gemini Bridge (Frontend)
+  Handles "At-the-edge" AI tasks:
+  1. Hallmark OCR using Tesseract.js (to keep local privacy).
+  2. Local Vision Fallback: Inspects image tone/brightness if the API is offline.
+  3. Image-to-Base64 conversion for API transport.
+*/
 import { createWorker } from 'tesseract.js';
 
 export const GEMINI_PROMPT = `You are GoldScan AI, an expert gold jewelry

@@ -1,3 +1,12 @@
+/*
+  ResultPage: The "Moment of Truth" for the customer.
+  Displays the AI's findings in a premium, high-trust interface.
+  Includes:
+  - Loan Decision (Pre-Approved / Needs Review / Rejected).
+  - Purity & Weight breakdown.
+  - "Share with NBFC" button to push the digital certificate to the lender.
+*/
+
 import { ArrowLeft, Brain, Send, Sparkles, ShieldAlert } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';

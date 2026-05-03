@@ -1,3 +1,10 @@
+/*
+  Gold Pricing & Loan Math
+  This utility handles:
+  1. Real-time MCX gold price fetching (INR).
+  2. Conservative loan calculation using industry-standard LTV (75%).
+  3. Making charge and impurity deductions.
+*/
 export async function fetchGoldPriceINR() {
   try {
     const response = await fetch('https://data-asg.goldprice.org/dbXRates/INR', { mode: 'cors' });

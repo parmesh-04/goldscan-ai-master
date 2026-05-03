@@ -1,3 +1,11 @@
+/*
+  Scan Flow Components
+  Modular UI steps for the GoldScan wizard:
+  - Step1: Multi-angle camera capture.
+  - Step2: Acoustic resonance (ping test) recorder.
+  - Step3: Multi-modal declaration form (captures user input for Bayesian priors).
+  - Step4: Real-time analysis visualization.
+*/
 import { useRef, useState, useCallback } from 'react';
 import { Camera, X, AlertTriangle, CheckCircle2, Lightbulb } from 'lucide-react';
 

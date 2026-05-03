@@ -1,12 +1,11 @@
 """
-Weight estimation module.
-
-Key rules:
-- Declaration-anchored weights must be plausibility-checked 
-  against jewelry type before being trusted
-- coin_detected significantly improves confidence
-- Non-jewelry items return null weight (no loan calculation possible)
-- Confidence values must be honest — never inflate
+Geometric Weight Estimation & Plausibility Engine
+This module estimates the gold weight without a physical scale. 
+It uses "Anchor-Based Estimation":
+1. Uses a ₹1 coin (known 22mm diameter) for pixel-to-mm scaling.
+2. Calculates volume based on jewelry type and geometric priors.
+3. Applies purity-dependent density (e.g., 22K = 17.7g/cm³).
+4. Performs a "Plausibility Check" on user declarations to catch "Hollow" or "Loaded" fakes.
 """
 
 WEIGHT_RANGES = {
