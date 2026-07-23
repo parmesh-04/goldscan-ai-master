@@ -25,6 +25,10 @@ backend/venv/
 backend/env/
 backend/.env
 backend/.pytest_cache/
+backend/*.db
+
+# Data directory (SQLite file created by Docker volume mount)
+data/
 
 # General
 node_modules/

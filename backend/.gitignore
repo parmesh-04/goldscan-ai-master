@@ -1,5 +1,11 @@
 .env
-__pycache__
-.venv
+__pycache__/
+.venv/
+venv/
 *.pyc
+*.pyo
+*.pyd
 .DS_Store
+.pytest_cache/
+*.db
+goldscan.db

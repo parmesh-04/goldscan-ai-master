@@ -422,11 +422,16 @@ const CHECKLIST = [
   'Generating confidence report',
 ];
 
-export function Step4Analysis({ analysisIndex, analysisError }) {
+export function Step4Analysis({ analysisIndex, analysisError, onRetry }) {
+  /*
+    Step 4: Animated analysis progress view.
+    Shows a live checklist as the backend processes the image.
+    On error, shows a clear message + retry button (goes back to Step 3).
+  */
   return (
     <div style={{display:'flex',flexDirection:'column',height:'100%',padding:'40px 48px',alignItems:'center',justifyContent:'center',gap:32,position:'relative'}}>
 
-      {/* Top right models counter */}
+      {/* Top right models counter — decorative indicator of parallel AI models */}
       <div style={{position:'absolute',top:32,right:32,background:'#141620',border:'1px solid #1E2130',
         borderRadius:10,padding:'10px 14px',display:'flex',alignItems:'center',gap:8}}>
         <span style={{fontSize:12,color:'#6B7280'}}>Models running:</span>
@@ -439,7 +444,7 @@ export function Step4Analysis({ analysisIndex, analysisError }) {
         </div>
       </div>
 
-      {/* Hexagon + orbiting dots */}
+      {/* Hexagon + orbiting signal icons */}
       <div style={{position:'relative',width:200,height:200,display:'flex',alignItems:'center',justifyContent:'center'}}>
         <svg width="200" height="200" style={{position:'absolute',animation:'hexSpin 8s linear infinite'}}>
           <polygon points="100,10 190,55 190,145 100,190 10,145 10,55"
@@ -460,7 +465,7 @@ export function Step4Analysis({ analysisIndex, analysisError }) {
         </div>
       </div>
 
-      {/* Checklist */}
+      {/* Live checklist — steps light up as analysis progresses */}
       <div style={{width:'100%',maxWidth:420,display:'flex',flexDirection:'column',gap:10}}>
         {CHECKLIST.map((item, i) => {
           const done = i < analysisIndex;
@@ -489,16 +494,40 @@ export function Step4Analysis({ analysisIndex, analysisError }) {
         })}
       </div>
 
+      {/* Error state — shown when the backend analysis fails */}
       {analysisError && (
-        <p style={{fontSize:12,color:'#E8A020',textAlign:'center',maxWidth:360,padding:'10px 14px',
-          background:'rgba(232,160,32,0.08)',border:'1px solid rgba(232,160,32,0.2)',borderRadius:8}}>
-          {analysisError}
-        </p>
+        <div style={{width:'100%',maxWidth:420,textAlign:'center'}}>
+          <div style={{padding:'16px 18px',background:'rgba(232,80,80,0.08)',
+            border:'1px solid rgba(232,80,80,0.25)',borderRadius:12,marginBottom:14}}>
+            <p style={{fontSize:13,color:'#E85050',fontWeight:600,margin:'0 0 4px'}}>
+              ⚠ Analysis Failed
+            </p>
+            <p style={{fontSize:12,color:'#E8A020',margin:0,lineHeight:1.5}}>
+              {analysisError}
+            </p>
+          </div>
+          {/* Retry brings the user back to Step 3 — their form data is preserved */}
+          {onRetry && (
+            <button onClick={onRetry} style={{
+              background:'transparent',border:'1px solid #D4A017',borderRadius:10,
+              padding:'10px 24px',fontSize:14,fontWeight:600,color:'#D4A017',
+              cursor:'pointer',transition:'all 200ms ease',
+            }}
+              onMouseEnter={e=>{e.currentTarget.style.background='rgba(212,160,23,0.1)'}}
+              onMouseLeave={e=>{e.currentTarget.style.background='transparent'}}
+            >
+              ← Go Back &amp; Retry
+            </button>
+          )}
+        </div>
       )}
 
-      <p style={{fontSize:12,color:'#3D4050',textAlign:'center'}}>
-        Analyzing with Gemini Vision AI · Usually takes 8–12 seconds
-      </p>
+      {/* Shown while analysis is running (no error) */}
+      {!analysisError && (
+        <p style={{fontSize:12,color:'#3D4050',textAlign:'center'}}>
+          Analyzing with Gemini Vision AI · Usually takes 8–12 seconds
+        </p>
+      )}
 
       <style>{`
         @keyframes hexSpin{to{transform:rotate(360deg)}}

@@ -1,0 +1,53 @@
+# GoldScan AI — Docker Compose
+# Runs the FastAPI backend and React/Nginx frontend as two services.
+#
+# Quick start:
+#   cp backend/.env.example backend/.env    # add GEMINI_API_KEY
+#   mkdir -p data
+#   docker-compose up --build
+#
+# The SQLite database is stored in ./data/ so it survives container restarts.
+
+services:
+
+  # ── FastAPI Backend ──────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+    container_name: goldscan_backend
+    ports:
+      - "8000:8000"                   # Expose API on localhost:8000
+    env_file:
+      - ./backend/.env                # Load GEMINI_API_KEY etc. from .env file
+    environment:
+      - ALLOWED_ORIGINS=http://localhost:5173,http://localhost:80,http://frontend
+      - LOG_LEVEL=INFO
+      - DATABASE_URL=/app/data/goldscan.db
+    volumes:
+      # Mount a local directory for the SQLite database file so it persists
+      # across container restarts (otherwise data is lost on each 'down')
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  # ── React + Nginx Frontend ───────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Tell Vite where the backend API is at build time
+        # This embeds the URL into the JS bundle — must match where backend runs
+        VITE_API_URL: http://localhost:8000
+    container_name: goldscan_frontend
+    ports:
+      - "5173:80"                     # Serve frontend on localhost:5173
+    depends_on:
+      backend:
+        condition: service_healthy    # Wait for backend to be healthy before starting
+    restart: unless-stopped

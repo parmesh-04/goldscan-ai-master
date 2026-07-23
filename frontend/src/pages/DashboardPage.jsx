@@ -200,88 +200,87 @@ export default function DashboardPage() {
 }
 
 function DashboardPageContent() {
+  /*
+    NBFC Loan Officer Dashboard — fetches submissions from the backend API.
+    Falls back to clearly-labelled demo rows when the backend is empty/unavailable.
+  */
   const [goldPrice, setGoldPrice] = useState({ pricePerGram: 6200, source: 'fallback', timestamp: '10:44 AM' });
-  const [expanded, setExpanded] = useState('#GS-0847');
+  const [expanded, setExpanded] = useState(null);
   const [query, setQuery] = useState('');
   const [riskFilter, setRiskFilter] = useState('All');
-  const [tick, setTick] = useState(0);
+  const [apiRows, setApiRows] = useState([]);     // Real submissions from backend
+  const [demoRows, setDemoRows] = useState(staticRows); // Demo data shown when DB is empty
+  const [loadError, setLoadError] = useState('');
 
-  const handleUpdateDecision = (appId, decision) => {
-    try {
-      const data = JSON.parse(localStorage.getItem('goldscan_results')) || [];
-      const idx = data.findIndex(d => (d.appId || d.id) === appId);
-      if (idx !== -1) {
-        if (!data[idx].fusion) data[idx].fusion = {};
-        const reverseMap = {
-          'PRE-APPROVED': 'PRE_APPROVED',
-          'NEEDS REVIEW': 'NEEDS_VERIFICATION',
-          'REJECTED': 'REJECTED'
-        };
-        data[idx].fusion.loanDecision = reverseMap[decision] || decision;
-        localStorage.setItem('goldscan_results', JSON.stringify(data));
-      } else {
-        const rowIdx = staticRows.findIndex(r => r.appId === appId);
-        if (rowIdx !== -1) {
-          staticRows[rowIdx].decision = decision;
-        }
-      }
-      setTick(t => t + 1);
-    } catch (e) {
-      console.error("Failed to update decision", e);
-    }
-  };
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-  const handleDelete = (appId) => {
-    try {
-      // Try to remove from localStorage (submitted apps)
-      const data = JSON.parse(localStorage.getItem('goldscan_results')) || [];
-      const filtered = data.filter(d => (d.appId || d.id) !== appId);
-      localStorage.setItem('goldscan_results', JSON.stringify(filtered));
-      // Try to remove from staticRows (demo apps)
-      const rowIdx = staticRows.findIndex(r => r.appId === appId);
-      if (rowIdx !== -1) staticRows.splice(rowIdx, 1);
-      if (expanded === appId) setExpanded('');
-      setTick(t => t + 1);
-    } catch (e) {
-      console.error("Failed to delete entry", e);
-    }
-  };
-
-  const handleRenameApplicant = (appId, newName) => {
-    try {
-      const data = JSON.parse(localStorage.getItem('goldscan_results')) || [];
-      const idx = data.findIndex(d => (d.appId || d.id) === appId);
-      if (idx !== -1) {
-        data[idx].applicant = newName;
-        localStorage.setItem('goldscan_results', JSON.stringify(data));
-      } else {
-        const rowIdx = staticRows.findIndex(r => r.appId === appId);
-        if (rowIdx !== -1) staticRows[rowIdx].applicant = newName;
-      }
-      setTick(t => t + 1);
-    } catch (e) {
-      console.error("Failed to rename applicant", e);
-    }
-  };
-
+  // Fetch real submissions from the backend on mount
   useEffect(() => {
     let active = true;
-    fetchGoldPriceINR().then((price) => {
+    fetch(`${apiUrl}/submissions?limit=50`)
+      .then(r => r.json())
+      .then(data => {
+        if (active && Array.isArray(data)) setApiRows(data);
+      })
+      .catch(err => {
+        // Backend unavailable — show demo data with a clear notice
+        if (active) setLoadError('Backend offline — showing demo data only.');
+      });
+    return () => { active = false; };
+  }, [apiUrl]);
+
+  // Fetch live gold price for loan calculations
+  useEffect(() => {
+    let active = true;
+    fetchGoldPriceINR().then(price => {
       if (active) setGoldPrice(price);
     });
     return () => { active = false; };
   }, []);
 
-  const rows = useMemo(() => {
-    const _ = tick;
-    const submitted = (() => {
+  // Mark an application as reviewed via backend API
+  const handleUpdateDecision = async (rowId, decision) => {
+    if (rowId && !rowId.startsWith('DEMO')) {
       try {
-        const data = JSON.parse(localStorage.getItem('goldscan_results'));
-        return Array.isArray(data) ? data : [];
-      } catch (e) { return []; }
-    })();
-    const merged = [...submitted, ...staticRows];
-    return merged.filter((row) => {
+        await fetch(`${apiUrl}/submissions/${rowId}/review`, { method: 'POST' });
+        // Refresh the list from backend
+        const data = await fetch(`${apiUrl}/submissions?limit=50`).then(r => r.json());
+        if (Array.isArray(data)) setApiRows(data);
+      } catch (e) {
+        // Graceful degradation: update local state if backend unreachable
+        setApiRows(prev => prev.map(r => r.id === rowId ? { ...r, reviewed: true } : r));
+      }
+    } else {
+      // Demo row — update locally
+      setDemoRows(prev => prev.map(r => r.appId === rowId ? { ...r, decision } : r));
+    }
+  };
+
+  // Delete an application via backend API or locally for demo rows
+  const handleDelete = async (rowId, appId) => {
+    if (rowId && !rowId.startsWith('DEMO')) {
+      try {
+        await fetch(`${apiUrl}/submissions/${rowId}`, { method: 'DELETE' });
+        setApiRows(prev => prev.filter(r => r.id !== rowId));
+      } catch (e) {
+        setApiRows(prev => prev.filter(r => r.id !== rowId));
+      }
+    } else {
+      setDemoRows(prev => prev.filter(r => r.appId !== appId));
+    }
+    if (expanded === (rowId || appId)) setExpanded(null);
+  };
+
+  const handleRenameApplicant = (rowId, newName) => {
+    // Local rename — backend rename endpoint can be added in Phase 3 enterprise upgrade
+    setApiRows(prev => prev.map(r => r.id === rowId ? { ...r, applicant: newName } : r));
+    setDemoRows(prev => prev.map(r => r.appId === rowId ? { ...r, applicant: newName } : r));
+  };
+
+  // Merge real API rows (shown first) with demo rows (shown when API is empty or offline)
+  const rows = useMemo(() => {
+    const sourceRows = apiRows.length > 0 ? apiRows : demoRows;
+    return sourceRows.filter((row) => {
       const j = row.jewelry || row.jewelryType || row.declarations?.jewelryType || 'Bangle';
       const r = row.risk || row.fusion?.riskLevel || 'LOW';
       const term = `${row.appId || ''} ${row.applicant || ''} ${j}`.toLowerCase();
@@ -289,7 +288,7 @@ function DashboardPageContent() {
       if (riskFilter !== 'All' && r !== riskFilter) return false;
       return true;
     });
-  }, [query, riskFilter, tick]);
+  }, [query, riskFilter, apiRows, demoRows]);
 
   return (
     <div className="min-h-screen text-textPrimary lg:grid lg:grid-cols-[280px_1fr]">
@@ -358,7 +357,7 @@ function DashboardPageContent() {
                       key={row.appId || row.id} 
                       row={row} 
                       expanded={expanded === (row.appId || row.id)} 
-                      onToggle={() => setExpanded(expanded === (row.appId || row.id) ? '' : (row.appId || row.id))} 
+                      onToggle={() => setExpanded(expanded === (row.appId || row.id) ? null : (row.appId || row.id))} 
                       goldPrice={goldPrice} 
                       onUpdateDecision={handleUpdateDecision}
                       onDelete={handleDelete}
@@ -484,7 +483,7 @@ function ApplicationRows({ row, expanded, onToggle, goldPrice, onUpdateDecision,
           <div className="flex gap-2 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
             <button title="Approve" onClick={(e) => { e.stopPropagation(); onUpdateDecision(appId, 'PRE-APPROVED'); }} className="p-1.5 rounded-md border border-teal/30 bg-teal/5 text-tealLight hover:bg-teal/20"><CheckCircle2 size={14}/></button>
             <button title="Flag" onClick={(e) => { e.stopPropagation(); onUpdateDecision(appId, 'REJECTED'); }} className="p-1.5 rounded-md border border-danger/30 bg-danger/5 text-danger hover:bg-danger/20"><ShieldAlert size={14}/></button>
-            <button title="Delete" onClick={(e) => { e.stopPropagation(); onDelete(appId); }} className="p-1.5 rounded-md border border-white/10 bg-white/5 text-textSecondary hover:bg-danger/20 hover:text-danger hover:border-danger/30"><Trash2 size={14}/></button>
+            <button title="Delete" onClick={(e) => { e.stopPropagation(); onDelete(row.id, row.appId); }} className="p-1.5 rounded-md border border-white/10 bg-white/5 text-textSecondary hover:bg-danger/20 hover:text-danger hover:border-danger/30"><Trash2 size={14}/></button>
           </div>
         </td>
       </tr>

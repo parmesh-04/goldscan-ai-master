@@ -1,4 +1,24 @@
+# Backend Python dependencies for GoldScan AI
+# Install with: pip install -r requirements.txt
+
+# Web framework and server
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
+
+# Data validation (Pydantic v2)
 pydantic==2.10.3
+
+# Multipart form support (for image upload)
 python-multipart==0.0.19
+
+# Google Gemini Vision AI SDK (required for image analysis)
+google-genai>=1.0.0
+
+# Load environment variables from .env file
+python-dotenv>=1.0.0
+
+# Retry with exponential backoff (for Gemini API rate limits / transient failures)
+tenacity>=8.2.0
+
+# Async SQLite for lightweight persistence (no external DB server needed)
+aiosqlite>=0.20.0

@@ -101,15 +101,38 @@ function ResultPageContent() {
   const purityFactorLabel = result.fusion?.finalPurity ? `${getPurityLabel(result.fusion.finalPurity)} (${Math.round((loan.purityFactor || 0) * 1000) / 10}%)` : 'Unknown';
 
   function shareWithNbfc() {
-    const stored = safeReadArray('goldscan_results');
-    const normalized = {
-      ...result,
-      submittedAt: 'Just now',
-      sharedAt: new Date().toISOString()
+    /*
+      Submits the assessment to the NBFC backend for loan officer review.
+      Falls back to localStorage if the backend is unreachable (dev/offline mode).
+    */
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const payload = {
+      applicantName: result.declarations?.applicantName || result.applicant || '',
+      location: result.declarations?.location || '',
+      notes: result.declarations?.notes || '',
+      resultJson: result,
     };
-    const withoutDuplicate = stored.filter((item) => (item.appId || item.id) !== (result.appId || result.id));
-    localStorage.setItem('goldscan_results', JSON.stringify([normalized, ...withoutDuplicate].slice(0, 15)));
-    setShared(true);
+
+    fetch(`${apiUrl}/submissions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+      .then(r => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        return r.json();
+      })
+      .then(() => {
+        setShared(true);
+      })
+      .catch(() => {
+        // Offline/dev fallback: write to localStorage so the dashboard still sees it
+        const stored = safeReadArray('goldscan_results');
+        const normalized = { ...result, submittedAt: 'Just now', sharedAt: new Date().toISOString() };
+        const withoutDuplicate = stored.filter(item => (item.appId || item.id) !== (result.appId || result.id));
+        localStorage.setItem('goldscan_results', JSON.stringify([normalized, ...withoutDuplicate].slice(0, 15)));
+        setShared(true);
+      });
   }
 
   return (

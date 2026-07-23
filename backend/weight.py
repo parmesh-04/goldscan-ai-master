@@ -1,13 +1,18 @@
 """
 Geometric Weight Estimation & Plausibility Engine
-This module estimates the gold weight without a physical scale. 
-It uses "Anchor-Based Estimation":
-1. Uses a ₹1 coin (known 22mm diameter) for pixel-to-mm scaling.
-2. Calculates volume based on jewelry type and geometric priors.
-3. Applies purity-dependent density (e.g., 22K = 17.7g/cm³).
-4. Performs a "Plausibility Check" on user declarations to catch "Hollow" or "Loaded" fakes.
+
+Estimates gold weight without a physical scale using:
+  1. Jewelry-type profile ranges (min/mid/max grams — derived from industry data)
+  2. Purity-based density (higher karat = denser = heavier for same volume)
+  3. Anchor-based refinement when the customer provides a declared weight
+  4. Coin-detected flag tightens the uncertainty band (±12% vs ±22%)
+
+Density values match PRD exactly:
+  24K: 19.32 g/cm³ | 22K: 17.73 | 18K: 15.58 | Plated: 8.50
 """
 
+# Expected weight ranges per jewelry type (grams)
+# Source: industry auction/appraisal averages for Indian market
 WEIGHT_RANGES = {
     "ring":     {"min": 2,  "mid": 5,   "max": 12,  "plausible_max": 20},
     "bangle":   {"min": 10, "mid": 22,  "max": 45,  "plausible_max": 80},
@@ -19,14 +24,15 @@ WEIGHT_RANGES = {
     "unknown":  {"min": 3,  "mid": 10,  "max": 30,  "plausible_max": 100},
 }
 
+# Exact PRD density values (g/cm³) — do not round these
 PURITY_DENSITY = {
-    "24K":    19.3,
-    "22K":    17.7,
-    "18K":    15.6,
-    "14K":    13.1,
-    "plated": 8.5,
-    "unknown": 15.0,   # Conservative mid-point
-    "not_gold": 8.0,   # Base metal assumption
+    "24K":      19.32,
+    "22K":      17.73,
+    "18K":      15.58,
+    "14K":      13.07,
+    "plated":   8.50,
+    "unknown":  15.00,   # Conservative mid-point when purity is unverified
+    "not_gold": 8.00,    # Approximate base metal (brass/copper) density
 }
 
 
@@ -38,12 +44,13 @@ def estimate_weight(
     is_jewelry: bool = True,
 ) -> dict | None:
     """
-    Estimate jewelry weight.
-    Returns None if item is not jewelry — caller must handle this.
+    Estimate the weight of a piece of jewelry.
+
+    Returns a dict with keys: min, mid, max, confidence, method, density.
+    Returns None if the item is not jewelry (caller must handle this case).
     """
 
-    # Non-jewelry: return None so fusion engine knows 
-    # there's no weight to calculate loan against
+    # Non-jewelry items have no estimable weight → fusion engine gets None
     if not is_jewelry:
         return None
 
@@ -51,56 +58,57 @@ def estimate_weight(
     base = WEIGHT_RANGES.get(jtype, WEIGHT_RANGES["unknown"])
     density = PURITY_DENSITY.get(purity_estimate, PURITY_DENSITY["unknown"])
 
-    # ── UNCERTAINTY based on available signals ─────────────
+    # Coin in frame gives us a pixel-to-mm scale reference → tighter bounds
     if coin_detected:
-        uncertainty = 0.12   # Coin reference = tighter bounds
+        uncertainty = 0.12        # ±12% uncertainty band (PRD spec)
         base_confidence = 0.72
     else:
-        uncertainty = 0.28   # No reference = wider bounds
+        uncertainty = 0.22        # ±22% uncertainty without scale reference (PRD spec)
         base_confidence = 0.52
 
-    # ── DECLARATION-ANCHORED MODE ──────────────────────────
+    # Parse declared weight from the customer's self-report
     anchor = _parse_weight(declared_weight)
 
     if anchor is not None:
-        # Plausibility check: does the declared weight make sense
-        # for this type of jewelry?
+        # ── Declaration-anchored mode ──────────────────────────────────
+        # Validate that the declared weight is physically plausible
         plausible_max = base["plausible_max"]
-        plausible_min = base["min"] * 0.5  # Allow some slack below min
+        plausible_min = base["min"] * 0.5   # Allow some slack for very delicate items
 
         if anchor > plausible_max:
-            # Declared weight is implausibly high for this jewelry type
-            # Don't trust it — fall back to type-based with a warning
+            # Declaration is implausibly heavy — reject it and use type-based estimate
             return {
                 "min": base["min"],
                 "mid": base["mid"],
                 "max": base["max"],
-                "confidence": base_confidence * 0.7,  # Lower confidence
+                "confidence": round(base_confidence * 0.7, 3),
                 "method": "type-based-declaration-rejected",
                 "density": density,
-                "warning": f"Declared weight {anchor}g is implausibly high "
-                           f"for a {jtype}. Using type-based estimate.",
+                "warning": (
+                    f"Declared weight {anchor}g is implausibly high for a {jtype}. "
+                    "Using type-based estimate instead."
+                ),
                 "declaredWeight": anchor,
             }
 
         if anchor < plausible_min:
-            # Unusually light — possible hollow item
+            # Unusually light → item may be hollow; note the warning
             return {
                 "min": round(anchor * 0.8, 1),
                 "mid": round(anchor, 1),
                 "max": round(anchor * 1.3, 1),
-                "confidence": base_confidence * 0.75,
+                "confidence": round(base_confidence * 0.75, 3),
                 "method": "declaration-anchored-low",
                 "density": density,
-                "warning": f"Declared weight {anchor}g is unusually light "
-                           f"for a {jtype}. Item may be hollow.",
+                "warning": (
+                    f"Declared weight {anchor}g is unusually light for a {jtype}. "
+                    "Item may be hollow."
+                ),
                 "declaredWeight": anchor,
             }
 
-        # Declaration passes plausibility — trust it with appropriate confidence
-        # Coin detection boosts confidence of declaration too
+        # Declaration is plausible — use it as the central anchor with the uncertainty band
         declaration_confidence = 0.78 if coin_detected else 0.62
-
         return {
             "min": round(anchor * (1 - uncertainty), 1),
             "mid": round(anchor, 1),
@@ -111,10 +119,10 @@ def estimate_weight(
             "declaredWeight": anchor,
         }
 
-    # ── TYPE-BASED MODE (no declaration) ──────────────────
-    # Apply a purity-based density correction to the mid estimate
-    # Heavier metals = potentially different mid estimate
-    density_ratio = density / PURITY_DENSITY["22K"]  # Normalize to 22K baseline
+    # ── Type-based mode (no declaration available) ─────────────────────
+    # Apply a density correction relative to the 22K baseline
+    # (a 18K piece is physically lighter than a 22K piece of same geometry)
+    density_ratio = density / PURITY_DENSITY["22K"]
     adjusted_mid = round(base["mid"] * density_ratio, 1)
     adjusted_mid = max(base["min"], min(base["max"], adjusted_mid))
 
@@ -131,8 +139,8 @@ def estimate_weight(
 
 def _parse_weight(value) -> float | None:
     """
-    Safely parse a weight value.
-    Returns None if invalid, zero, or missing.
+    Safely parse a weight value from any input type.
+    Returns None if the value is missing, zero, or non-numeric.
     """
     if value is None:
         return None

@@ -6,15 +6,22 @@ import ScanRightPanel from './scan/ScanRightPanel.jsx';
 import { Step1Upload, Step2Audio, Step3Declare, Step4Analysis } from './scan/ScanSteps.jsx';
 import { recognizeBillText } from '../utils/geminiClient.js';
 
-/* 
-  ScanPage: The core "User Journey" for gold assessment.
-  This component orchestrates a 4-step wizard:
-  1. Camera: Capture jewelry from 5+ angles.
-  2. Audio: Capture the "ping" resonance (TenzorX unique feature).
-  3. Declare: Customer provides their identity, location, and asset details.
-  4. Analysis: Real-time progress bar while backend AI does the heavy lifting.
+/*
+  ScanPage — The 4-step gold assessment wizard.
+  
+  Step 1: Upload jewelry photos (min 1, up to 5)
+  Step 2: Audio tap-test (optional but improves accuracy)
+  Step 3: Customer declares karat, weight, and personal details
+  Step 4: Backend analysis runs; results displayed on ResultPage
+
+  Data flow:
+    Photos → POST /analyze (FastAPI backend → Gemini 2.5 Flash → fusion engine)
+    Bill image → Tesseract.js OCR (browser-local, no API key needed)
+    Result → navigate to /result (passed via React Router state)
+    "Share with NBFC" → POST /submissions (backend SQLite persistence)
 */
 
+// Labels for the animated progress steps shown during analysis
 const ANALYSIS_STEPS = [
   'Images received & quality verified',
   'Background removed & normalized',
@@ -25,18 +32,13 @@ const ANALYSIS_STEPS = [
   'Generating confidence report',
 ];
 
+// Framer Motion variants for smooth step transitions
 const slideVariants = {
-  enter: {
-    x: 0, opacity: 0, y: 30, filter: 'blur(8px)',
-  },
-  center: {
-    x: 0, opacity: 1, y: 0, filter: 'blur(0px)',
-    transition: { duration: 0.55, ease: [0.16, 1, 0.3, 1] },
-  },
-  exit: {
-    x: 0, opacity: 0, y: -20, filter: 'blur(6px)',
-    transition: { duration: 0.25, ease: 'easeIn' },
-  },
+  enter:  { x: 0, opacity: 0, y: 30, filter: 'blur(8px)' },
+  center: { x: 0, opacity: 1, y: 0,  filter: 'blur(0px)',
+            transition: { duration: 0.55, ease: [0.16, 1, 0.3, 1] } },
+  exit:   { x: 0, opacity: 0, y: -20, filter: 'blur(6px)',
+            transition: { duration: 0.25, ease: 'easeIn' } },
 };
 
 export default function ScanPage() {
@@ -57,22 +59,34 @@ export default function ScanPage() {
   const [analysisIndex, setAnalysisIndex] = useState(0);
   const [analysisError, setAnalysisError] = useState('');
 
-  // Step 4: run analysis
+  // ── Step 4: Run the full analysis pipeline ──────────────────────────
   useEffect(() => {
     if (step !== 4) return;
+
+    // Guard: must have at least one image before analysis can run
+    // (This check also runs in the UI before advancing to Step 4)
+    if (images.length === 0) {
+      setAnalysisError('No image selected. Please go back and upload a photo.');
+      return;
+    }
+
     let cancelled = false;
 
     async function run() {
       setAnalysisError('');
       setAnalysisIndex(0);
+
+      // Animate through progress steps while backend is working
       for (let i = 0; i < ANALYSIS_STEPS.length; i++) {
         if (cancelled) return;
         setAnalysisIndex(i);
         await new Promise(r => setTimeout(r, 700));
       }
+
       try {
+        // Build the multipart form — backend expects image + metadata fields
         const formData = new FormData();
-        formData.append('image', images[0]?.file);
+        formData.append('image', images[0].file);
         formData.append('jewelry_type', details.jewelryType || 'unknown');
         formData.append('declared_karat', details.declaredKarat || '');
         formData.append('self_reported_weight', details.selfReportedWeight || '');
@@ -82,71 +96,85 @@ export default function ScanPage() {
         const res = await fetch(`${apiUrl}/analyze`, {
           method: 'POST',
           body: formData,
+          signal: AbortSignal.timeout(60_000),  // 60s total request timeout
         });
 
         const data = await res.json();
 
+        // Map specific backend error codes to user-friendly messages
         if (!res.ok) {
           const errorCode = data.detail?.error || data.error;
-          if (errorCode === 'INVALID_FILE_TYPE') {
-            throw new Error('Please upload a JPEG or PNG photo');
-          } else if (errorCode === 'FILE_TOO_SMALL') {
-            throw new Error('Photo is too small. Take a clearer photo.');
-          } else if (errorCode === 'FILE_TOO_LARGE') {
-            throw new Error('Photo must be under 10MB.');
-          } else if (errorCode === 'VISION_ANALYSIS_FAILED') {
-            throw new Error('Analysis service busy. Please try again.');
-          } else if (errorCode === 'INTERNAL_ERROR') {
-            throw new Error('Something went wrong. Please try again.');
-          } else {
-            throw new Error('Something went wrong. Please try again.');
-          }
+          const errorMessages = {
+            INVALID_FILE_TYPE:    'Please upload a JPEG or PNG photo of the jewelry.',
+            FILE_TOO_SMALL:       'Photo file is too small. Please take a clearer photo.',
+            FILE_TOO_LARGE:       'Photo must be under 10 MB. Please compress and retry.',
+            VISION_ANALYSIS_FAILED: 'AI analysis service is busy. Please try again in a moment.',
+            FUSION_ENGINE_FAILED: 'Risk assessment failed internally. Please retry.',
+            INTERNAL_ERROR:       'Something went wrong on our end. Please try again.',
+          };
+          throw new Error(errorMessages[errorCode] || 'Something went wrong. Please try again.');
         }
 
         if (cancelled) return;
 
+        // Run Tesseract OCR on the bill image (browser-side, no API key needed)
         let billText = '';
-        if (details.billFile) billText = await recognizeBillText(details.billFile);
+        if (details.billFile) {
+          billText = await recognizeBillText(details.billFile);
+        }
 
-        const appId = `#GS-${Math.floor(1000 + Math.random() * 9000)}`;
+        // Compose the result object to pass to ResultPage
         const result = {
-          id: `GS-${Date.now()}`, 
-          appId,
-          applicant: details.applicantName ? `${details.applicantName}${details.location ? `, ${details.location}` : ''}` : 'New Customer, Remote',
+          id: data.submissionId || `GS-${Date.now()}`,   // Backend assigns real ID after save
+          appId: data.appId || `#GS-PENDING`,
+          applicant: details.applicantName
+            ? `${details.applicantName}${details.location ? `, ${details.location}` : ''}`
+            : 'New Customer, Remote',
           createdAt: new Date().toISOString(),
           submittedAt: 'Just now',
           images: images.map(i => i.preview),
           declarations: { ...details, purchaseBillText: billText },
-          // Store raw API response directly
-          ...data
+          audioResult,            // Pass audio result for display on ResultPage
+          ...data,               // Spread the full backend response
         };
-        
+
+        // Navigate to the result page with the assessment data
+        // State is the primary data source; localStorage is only a fallback for page refresh
         localStorage.setItem('goldscan_latest_result', JSON.stringify(result));
         navigate('/result', { state: { result } });
+
       } catch (err) {
         if (cancelled) return;
-        setAnalysisError(err.message || 'Unable to display results. Please try again.');
+
+        // Distinguish timeout from other errors
+        const msg = err.name === 'TimeoutError'
+          ? 'Request timed out. Please check your connection and try again.'
+          : (err.message || 'Unable to complete analysis. Please try again.');
+
+        setAnalysisError(msg);
       }
     }
 
     run();
     return () => { cancelled = true; };
-  }, [step]);
+  }, [step]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  const next = () => setStep(s => s + 1);
+  // Advance to next wizard step — Step 1 validates at least 1 image exists
+  const next = () => {
+    if (step === 1 && images.length === 0) return;  // Prevent advancing without image
+    setStep(s => s + 1);
+  };
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#080A0F', position: 'relative', fontFamily: '"Inter", sans-serif' }}>
-      {/* Noise texture overlay */}
+      {/* Subtle noise texture overlay for depth */}
       <div style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none', opacity: 0.4,
         backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E")`,
       }} aria-hidden />
       <ScanParticles />
 
-      {/* LEFT PANEL */}
-      <div style={{
-        flex: 1, position: 'relative', zIndex: 1,
-        overflow: 'hidden', display: 'flex', flexDirection: 'column',
+      {/* LEFT PANEL — wizard steps */}
+      <div style={{ flex: 1, position: 'relative', zIndex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column',
         background: 'radial-gradient(ellipse at 60% 40%, rgba(212,160,23,0.04) 0%, transparent 70%)',
       }}>
         <AnimatePresence mode="wait">
@@ -180,14 +208,19 @@ export default function ScanPage() {
               <Step4Analysis
                 analysisIndex={analysisIndex}
                 analysisError={analysisError}
+                onRetry={() => {
+                  // Allow user to go back to Step 3 to retry the submission
+                  setStep(3);
+                  setAnalysisError('');
+                }}
               />
             )}
           </motion.div>
         </AnimatePresence>
 
-        {/* Mobile progress dots (hidden on desktop) */}
+        {/* Mobile progress dots (visible only on small screens) */}
         <div style={{ display: 'none' }} className="mobile-progress">
-          {[1,2,3,4].map(n => (
+          {[1, 2, 3, 4].map(n => (
             <div key={n} style={{
               width: step >= n ? 20 : 8, height: 8, borderRadius: 4,
               background: step === n ? '#D4A017' : step > n ? '#22C891' : '#2A2D3A',
@@ -197,12 +230,11 @@ export default function ScanPage() {
         </div>
       </div>
 
-      {/* RIGHT PANEL */}
+      {/* RIGHT PANEL — contextual tips and progress */}
       <ScanRightPanel step={step} />
 
       <style>{`
         @media(max-width:768px){
-          /* Hide right panel, show mobile dots */
           div[style*="width:40%"]{display:none!important}
           .mobile-progress{display:flex!important;justify-content:center;gap:6px;padding:16px;position:absolute;bottom:0;left:0;right:0;z-index:10}
         }
