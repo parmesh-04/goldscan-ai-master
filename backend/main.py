@@ -347,12 +347,10 @@ async def analyze(
     )
 
     # ── Step 6: Bayesian fusion ──────────────────────────────────────────
-    # Audio signal comes from the frontend (recorded before this API call)
-    # The backend receives it as a JSON blob in the audio_result parameter
-    # (currently None — the frontend sends audio results alongside the analysis)
-    audio = None
-
-    logger.info("Running fusion engine [req:%s]", req_id)
+    # `audio` was parsed and validated in the guardrail block above (Step 3).
+    # It is either a clean dict of acoustic scalars or None if no audio was
+    # provided / the payload was malformed. Pass it directly to the fusion engine.
+    logger.info("Running fusion engine [req:%s] audio=%s", req_id, bool(audio))
     try:
         fusion = run_fusion_engine(vision, audio, weight, declarations)
     except Exception as exc:
