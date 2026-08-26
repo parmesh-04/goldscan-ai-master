@@ -67,6 +67,7 @@ function ResultPageContent() {
   const navigate = useNavigate();
   const [goldPrice, setGoldPrice] = useState({ pricePerGram: 6200, source: 'fallback', timestamp: 'now' });
   const [shared, setShared] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const result = useMemo(() => location.state?.result || loadLatestResult() || demoResult(), [location.state?.result]);
 
   useEffect(() => {
@@ -101,10 +102,10 @@ function ResultPageContent() {
   const purityFactorLabel = result.fusion?.finalPurity ? `${getPurityLabel(result.fusion.finalPurity)} (${Math.round((loan.purityFactor || 0) * 1000) / 10}%)` : 'Unknown';
 
   function shareWithNbfc() {
-    /*
-      Submits the assessment to the NBFC backend for loan officer review.
-      Falls back to localStorage if the backend is unreachable (dev/offline mode).
-    */
+    // Guard: prevent double-submission if the button is clicked twice
+    if (sharing || shared) return;
+    setSharing(true);
+
     const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
     const payload = {
       applicantName: result.declarations?.applicantName || result.applicant || '',
@@ -132,6 +133,9 @@ function ResultPageContent() {
         const withoutDuplicate = stored.filter(item => (item.appId || item.id) !== (result.appId || result.id));
         localStorage.setItem('goldscan_results', JSON.stringify([normalized, ...withoutDuplicate].slice(0, 15)));
         setShared(true);
+      })
+      .finally(() => {
+        setSharing(false);
       });
   }
 
@@ -226,9 +230,9 @@ function ResultPageContent() {
 
             <section className="card">
               <div className="grid gap-3">
-                <button type="button" onClick={shareWithNbfc} className="btn-primary flex items-center justify-center gap-2">
+                <button type="button" onClick={shareWithNbfc} disabled={sharing || shared} className="btn-primary flex items-center justify-center gap-2" style={{ opacity: (sharing || shared) ? 0.7 : 1, cursor: (sharing || shared) ? 'not-allowed' : 'pointer' }}>
                   <Send className="h-4 w-4" />
-                  Share with NBFC
+                  {sharing ? 'Sending…' : 'Share with NBFC'}
                 </button>
                 <button type="button" onClick={() => navigate('/scan')} className="btn-secondary">
                   Start New Scan

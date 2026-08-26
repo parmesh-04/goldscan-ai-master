@@ -17,6 +17,7 @@ Environment variables (see .env.example):
   LOG_LEVEL            — Python logging level (default: INFO)
 """
 
+import json
 import logging
 import os
 import traceback
@@ -183,6 +184,7 @@ async def analyze(
     declared_karat: str = Form(""),
     self_reported_weight: str = Form(""),
     audio_performed: str = Form("false"),
+    audio_result: str = Form("", description="JSON blob of audio tap-test scalars (optional)"),
 ):
     """
     Primary assessment endpoint: accepts a jewelry photo and metadata,
@@ -252,6 +254,57 @@ async def analyze(
             pass   # Invalid weight — ignore it, don't crash
 
     audio_was_performed = audio_performed.lower() in ("true", "1", "yes")
+
+    # ── Audio result guardrails ──────────────────────────────────────────
+    # Accepts a tiny JSON blob of acoustic scalars from the frontend.
+    # Hard limits prevent abuse:
+    #   • 2 048-byte cap stops oversized / deeply-nested payloads (DoS guard)
+    #   • strict allowlist on materialClass prevents injection via enum values
+    #   • numeric fields are clamped to plausible acoustic ranges
+    #   • any malformed input silently falls back to None (no crash, no leak)
+    VALID_AUDIO_CLASSES = {"solid_gold", "plated", "uncertain"}
+    AUDIO_JSON_MAX_BYTES = 2_048
+
+    audio: dict | None = None
+    if audio_result and audio_result.strip():
+        raw = audio_result.strip()
+        if len(raw.encode()) > AUDIO_JSON_MAX_BYTES:
+            logger.warning(
+                "[req:%s] audio_result payload too large (%d bytes) — ignored",
+                req_id, len(raw.encode()),
+            )
+        else:
+            try:
+                parsed = json.loads(raw)
+                # Only accept a flat dict — reject arrays and nested objects
+                if not isinstance(parsed, dict):
+                    raise ValueError("audio_result must be a JSON object")
+
+                material_class = parsed.get("materialClass", "")
+                if material_class not in VALID_AUDIO_CLASSES:
+                    raise ValueError(f"Unknown materialClass '{material_class}'")
+
+                confidence = float(parsed.get("confidence", 0.5))
+                freq       = float(parsed.get("fundamentalFreq", 0))
+                q_proxy    = float(parsed.get("qProxy", 0.0))
+
+                audio = {
+                    "materialClass": material_class,
+                    # Clamp confidence to valid probability range [0, 1]
+                    "confidence":      max(0.0, min(1.0, confidence)),
+                    # Clamp freq to physically plausible audible range (20 Hz – 20 kHz)
+                    "fundamentalFreq": max(20, min(20_000, int(freq))),
+                    # Clamp qProxy to [0, 1]
+                    "qProxy":          max(0.0, min(1.0, q_proxy)),
+                }
+                logger.info(
+                    "[req:%s] Audio signal accepted: class=%s conf=%.2f freq=%dHz",
+                    req_id, material_class, audio["confidence"], audio["fundamentalFreq"],
+                )
+            except (json.JSONDecodeError, ValueError, TypeError, KeyError) as exc:
+                # Malformed payload — log and ignore safely, never crash the request
+                logger.warning("[req:%s] Malformed audio_result — ignored: %s", req_id, exc)
+                audio = None
 
     declarations = {
         "jewelryType": jewelry_type_clean,

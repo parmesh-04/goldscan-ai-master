@@ -40,13 +40,19 @@ MAKING_CHARGE_DEDUCTION = 0.93
 # Bayesian posterior calculation
 # ---------------------------------------------------------------------------
 
-def calculate_purity_posterior(vision_result: dict) -> list[dict]:
+def calculate_purity_posterior(vision_result: dict, audio_result: dict | None = None) -> list[dict]:
     """
     Performs a full multi-signal Bayesian update on gold purity.
     
     Prior = Indian gold market distribution (World Gold Council data).
     Each signal updates via: posterior[k] ∝ prior[k] × likelihood[signal][k]
     Returns a sorted list of {karat, probability} dicts.
+
+    Signals applied in order of increasing specificity:
+      1. Hallmark OCR  (strongest — near-definitive if legible)
+      2. Surface color consistency (medium strength)
+      3. Plating visual indicators (contextual boost)
+      4. Audio tap-test resonance (secondary — discounted for env noise)
     """
 
     # Prior: probability distribution of gold karats in the Indian retail market
@@ -103,6 +109,26 @@ def calculate_purity_posterior(vision_result: dict) -> list[dict]:
         plating_conf = vision_result.get("plating_confidence", 0.5)
         # Proportionally boost Plated; other classes will be renormalized down
         posterior["Plated"] *= (1 + plating_conf * 3)
+        _normalize(posterior)
+
+    # ── UPDATE 4: Audio tap-test (acoustic resonance) ─────────────────────
+    # P(audio_class | karat) likelihoods are grounded in material physics:
+    #   solid gold → high density → fast decay → low qProxy
+    #   plated / hollow → slower decay → high qProxy
+    # The 0.7 discount on confidence accounts for environmental noise.
+    if audio_result and audio_result.get("materialClass"):
+        audio_likelihoods = {
+            "solid_gold": {"24K": 0.25, "22K": 0.55, "18K": 0.15, "14K": 0.03, "Plated": 0.02},
+            "plated":     {"24K": 0.01, "22K": 0.04, "18K": 0.05, "14K": 0.10, "Plated": 0.80},
+            "uncertain":  {"24K": 0.05, "22K": 0.35, "18K": 0.25, "14K": 0.15, "Plated": 0.20},
+        }
+        a_likelihood = audio_likelihoods.get(
+            audio_result["materialClass"], audio_likelihoods["uncertain"]
+        )
+        # Discount confidence by 0.7 — environmental noise degrades acoustic reliability
+        a_conf = audio_result.get("confidence", 0.5) * 0.7
+        for k in posterior:
+            posterior[k] *= (a_likelihood[k] * a_conf + (1 - a_conf) * 0.2)
         _normalize(posterior)
 
     return [
@@ -321,7 +347,7 @@ def run_fusion_engine(vision_result: dict, audio_result: dict | None,
 
     # Early exit: non-jewelry submissions cannot be assessed
     if not vision_result.get("is_jewelry", True):
-        purity_posterior = calculate_purity_posterior(vision_result)
+        purity_posterior = calculate_purity_posterior(vision_result, audio_result)
         return {
             "riskLevel": "HIGH",
             "riskScore": 100,
@@ -353,7 +379,7 @@ def run_fusion_engine(vision_result: dict, audio_result: dict | None,
         risk_level = "LOW"
 
     # Run the Bayesian purity posterior update
-    purity_posterior = calculate_purity_posterior(vision_result)
+    purity_posterior = calculate_purity_posterior(vision_result, audio_result)
 
     # Compute weighted confidence across all signals
     overall_confidence = _calculate_overall_confidence(vision_result, audio_result, weight_result, flags)

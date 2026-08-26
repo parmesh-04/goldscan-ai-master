@@ -229,3 +229,131 @@ class TestLoanDecision:
             # At 10g × 22K density × ~₹6500/g × 93% making × 75% LTV = should be > 0
             assert fusion["loanEligibility"]["max"] > 0
             assert fusion["loanEligibility"]["min"] <= fusion["loanEligibility"]["max"]
+
+
+# ---------------------------------------------------------------------------
+# Audio Bayesian Posterior Tests
+# ---------------------------------------------------------------------------
+
+class TestAudioBayesianUpdate:
+    """
+    Tests that audio actually shifts the purity posterior, not just fires a flag.
+    These tests verify the UPDATE 4 block inside calculate_purity_posterior().
+    """
+
+    def test_solid_gold_audio_boosts_22k_vs_no_audio(self):
+        """
+        'solid_gold' audio with high confidence should make 22K more probable
+        relative to the same vision result with no audio.
+        """
+        from fusion import calculate_purity_posterior
+        vision = good_22k_vision()
+
+        baseline = calculate_purity_posterior(vision, audio_result=None)
+        with_audio = calculate_purity_posterior(
+            vision,
+            audio_result={"materialClass": "solid_gold", "confidence": 0.72}
+        )
+        probs_base  = {p["karat"]: p["probability"] for p in baseline}
+        probs_audio = {p["karat"]: p["probability"] for p in with_audio}
+
+        # 22K should be at least as probable (or higher) when solid_gold is confirmed
+        assert probs_audio["22K"] >= probs_base["22K"], (
+            f"solid_gold audio should not decrease 22K probability: "
+            f"{probs_base['22K']}% → {probs_audio['22K']}%"
+        )
+        # Plated should drop when solid gold audio is present
+        assert probs_audio["Plated"] <= probs_base["Plated"], (
+            f"solid_gold audio should reduce Plated probability: "
+            f"{probs_base['Plated']}% → {probs_audio['Plated']}%"
+        )
+
+    def test_plated_audio_raises_plated_probability(self):
+        """
+        'plated' audio should raise the Plated posterior compared to no audio.
+        We use a weaker hallmark (unclear) so audio is not drowned out by a
+        near-definitive 916 stamp — that's the scientifically correct test.
+        A strong 916 hallmark dominating audio is *correct* Bayesian behaviour.
+        """
+        from fusion import calculate_purity_posterior
+        # Unclear hallmark gives audio room to move the needle
+        vision = {
+            **good_22k_vision(),
+            "hallmark_text": "unclear", "hallmark_confidence": 0.30,
+            "plating_indicators": False, "plating_confidence": 0.0,
+            "color_consistency": "unknown",
+        }
+
+        baseline = calculate_purity_posterior(vision, audio_result=None)
+        with_audio = calculate_purity_posterior(
+            vision,
+            audio_result={"materialClass": "plated", "confidence": 0.72}
+        )
+        probs_base  = {p["karat"]: p["probability"] for p in baseline}
+        probs_audio = {p["karat"]: p["probability"] for p in with_audio}
+
+        assert probs_audio["Plated"] > probs_base["Plated"], (
+            f"plated audio must raise Plated %: {probs_base['Plated']} → {probs_audio['Plated']}"
+        )
+        # The shift should be meaningful — at least 5 percentage points
+        assert probs_audio["Plated"] - probs_base["Plated"] >= 5, (
+            f"plated audio shift too small: only +{probs_audio['Plated'] - probs_base['Plated']}%"
+        )
+
+    def test_absent_audio_leaves_posterior_unchanged(self):
+        """
+        Calling calculate_purity_posterior with audio_result=None must produce
+        the same result as calling it without the argument at all.
+        Skipping the audio step must never alter the output.
+        """
+        from fusion import calculate_purity_posterior
+        vision = good_22k_vision()
+
+        no_arg   = calculate_purity_posterior(vision)
+        explicit_none = calculate_purity_posterior(vision, audio_result=None)
+
+        probs_no_arg = {p["karat"]: p["probability"] for p in no_arg}
+        probs_none   = {p["karat"]: p["probability"] for p in explicit_none}
+
+        assert probs_no_arg == probs_none, (
+            f"audio=None must not change posterior: {probs_no_arg} vs {probs_none}"
+        )
+
+    def test_low_confidence_audio_causes_minimal_shift(self):
+        """
+        Audio with very low confidence (0.30) should cause only a small shift
+        in the posterior — the 0.7 discount brings effective confidence to 0.21,
+        which should pull the posterior toward the uniform prior, not strongly
+        toward the audio's materialClass.
+        """
+        from fusion import calculate_purity_posterior
+        vision = good_22k_vision()
+
+        baseline = calculate_purity_posterior(vision, audio_result=None)
+        low_conf = calculate_purity_posterior(
+            vision,
+            audio_result={"materialClass": "plated", "confidence": 0.30}
+        )
+        probs_base = {p["karat"]: p["probability"] for p in baseline}
+        probs_low  = {p["karat"]: p["probability"] for p in low_conf}
+
+        # Plated should rise but by less than 10 points for a weak signal
+        shift = probs_low["Plated"] - probs_base["Plated"]
+        assert shift < 10, (
+            f"Low-confidence audio should cause minimal shift, got +{shift}% on Plated"
+        )
+
+    def test_plated_audio_with_solid_vision_elevates_risk(self):
+        """
+        End-to-end: plated audio on an otherwise clean 22K item should
+        elevate risk level to at least MEDIUM and fire AUDIO_PLATING_SIGNAL.
+        """
+        audio = {"materialClass": "plated", "confidence": 0.72}
+        fusion = run_fusion_engine(good_22k_vision(), audio, good_weight(), no_declarations())
+
+        assert fusion["riskLevel"] in ("MEDIUM", "HIGH"), (
+            f"plated audio should raise risk: got {fusion['riskLevel']}"
+        )
+        codes = [f["code"] for f in fusion["flags"]]
+        assert "AUDIO_PLATING_SIGNAL" in codes, "AUDIO_PLATING_SIGNAL flag must fire"
+

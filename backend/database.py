@@ -49,7 +49,7 @@ async def init_db() -> None:
     logger.info("Database initialised at: %s", DATABASE_PATH)
 
 
-async def save_submission(result: dict) -> str:
+async def save_submission(result: dict) -> tuple[str, str]:
     """
     Persists a completed assessment to the database.
     Generates a server-side UUID and a short human-readable app ID.

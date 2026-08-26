@@ -8,10 +8,11 @@
 */
 import { useRef, useState, useCallback } from 'react';
 import { Camera, X, AlertTriangle, CheckCircle2, Lightbulb } from 'lucide-react';
+import { recordAndAnalyze, demoAudioResult } from '../../utils/audioAnalyzer.js';
 
 const G = '#D4A017';
 const C = { card:'#141620', border:'#1E2130', inputBg:'#0F1117', inputBorder:'#2A2D3A',
-  text:'#F0F0F0', muted:'#6B7280', green:'#22C891', amber:'#E8A020' };
+  text:'#F0F0F0', muted:'#6B7280', green:'#22C891', amber:'#E8A020', dim:'#4B5563' };
 
 /* ─── STEP 1: UPLOAD ─── */
 export function Step1Upload({ images, setImages, onContinue }) {
@@ -19,8 +20,10 @@ export function Step1Upload({ images, setImages, onContinue }) {
 
   const addFiles = useCallback((files) => {
     const newImgs = Array.from(files).slice(0, 4 - images.length).map(file => ({
-      file, preview: URL.createObjectURL(file),
-      quality: Math.random() > 0.25 ? 'good' : 'lowlight',
+      file,
+      preview: URL.createObjectURL(file),
+      // Quality heuristic: files under 200 KB are likely compressed/low-res
+      quality: file.size > 200_000 ? 'good' : 'lowlight',
     }));
     setImages(prev => [...prev, ...newImgs].slice(0, 4));
   }, [images.length, setImages]);
@@ -117,32 +120,28 @@ export function Step1Upload({ images, setImages, onContinue }) {
 const WAVEFORM = [10,18,28,36,40,36,28,18,10,14,22,32,38,32,22,14];
 
 export function Step2Audio({ onContinue, onSkip, audioResult, setAudioResult }) {
-  const [recState, setRecState] = useState('ready');
-  const [countdown, setCountdown] = useState(3);
-  const timerRef = useRef(null);
+  const [recState, setRecState] = useState('ready');   // 'ready' | 'recording' | 'done' | 'error'
+  const [progress, setProgress] = useState(0);
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const startRec = () => {
+  const startRec = async () => {
     setRecState('recording');
-    setCountdown(3);
-    let c = 3;
-    timerRef.current = setInterval(() => {
-      c--;
-      setCountdown(c);
-      if (c <= 0) { clearInterval(timerRef.current); finishRec(); }
-    }, 1000);
+    setProgress(0);
+    setErrorMsg('');
+    try {
+      // Real microphone capture — calls Web Audio API via audioAnalyzer.js
+      const result = await recordAndAnalyze(3000, setProgress);
+      setAudioResult(result);
+      setRecState('done');
+    } catch (err) {
+      // Mic permission denied or API unavailable — load demo so user can still continue
+      setErrorMsg('Microphone unavailable. A demo signal has been loaded so you can continue.');
+      setAudioResult(demoAudioResult());
+      setRecState('error');
+    }
   };
 
-  const finishRec = () => {
-    setRecState('done');
-    setAudioResult({
-      fundamentalFreq: 820 + Math.round(Math.random() * 60),
-      materialClass: 'solid_gold',
-      confidence: 0.72,
-      decayDescription: 'Fast (dense metal)',
-    });
-  };
-
-  const reset = () => { setRecState('ready'); setAudioResult(null); setCountdown(3); };
+  const reset = () => { setRecState('ready'); setAudioResult(null); setProgress(0); setErrorMsg(''); };
 
   const INSTRUCTIONS = [
     'Place jewelry on a hard surface — marble or glass works best.',
@@ -191,10 +190,10 @@ export function Step2Audio({ onContinue, onSkip, audioResult, setAudioResult }) 
             transition:'border-color 300ms ease',
             boxShadow: recState==='recording' ? '0 0 0 8px rgba(229,184,66,0.06)' : 'none',
           }}>
-            {recState==='done'
-              ? <span style={{ fontSize:26, color:'#22C891' }}>✓</span>
+            {(recState==='done' || recState==='error')
+              ? <span style={{ fontSize:26, color: recState==='error' ? '#E8A020' : '#22C891' }}>{recState==='error' ? '⚠' : '✓'}</span>
               : recState==='recording'
-                ? <span style={{ fontSize:22, fontWeight:800, color:'#E5B842', fontFamily:'monospace' }}>{countdown}</span>
+                ? <span style={{ fontSize:14, fontWeight:800, color:'#E5B842', fontFamily:'monospace' }}>{Math.round(progress * 100)}%</span>
                 : <span style={{ fontSize:26 }}>🎤</span>
             }
           </div>
@@ -212,10 +211,13 @@ export function Step2Audio({ onContinue, onSkip, audioResult, setAudioResult }) 
           </div>
         </div>
 
-        {/* Audio result card */}
-        {recState==='done' && audioResult && (
-          <div style={{ background:'#1F1F1F', border:'1px solid rgba(255,255,255,0.06)', borderRadius:10, padding:'16px 20px' }}>
-            <p style={{ fontSize:13, fontWeight:600, color:'#FFFFFF', margin:'0 0 12px', fontFamily:'"Inter",sans-serif' }}>🔊 Audio Captured</p>
+        {/* Audio result card (shown after recording or on error with demo) */}
+        {(recState==='done' || recState==='error') && audioResult && (
+          <div style={{ background:'#1F1F1F', border:`1px solid ${recState==='error' ? 'rgba(232,160,32,0.3)' : 'rgba(255,255,255,0.06)'}`, borderRadius:10, padding:'16px 20px' }}>
+            <p style={{ fontSize:13, fontWeight:600, color:'#FFFFFF', margin:'0 0 12px', fontFamily:'"Inter",sans-serif' }}>
+              {recState==='error' ? '⚠️ Demo Signal Loaded' : '🔊 Audio Captured'}
+            </p>
+            {errorMsg && <p style={{ fontSize:12, color:'#E8A020', margin:'0 0 10px', fontFamily:'"Inter",sans-serif' }}>{errorMsg}</p>}
             {[['Frequency', `~${audioResult.fundamentalFreq} Hz`], ['Decay', audioResult.decayDescription], ['Confidence', `${Math.round(audioResult.confidence*100)}%`]].map(([l,v]) => (
               <div key={l} style={{ display:'flex', justifyContent:'space-between', padding:'6px 0', borderTop:'1px solid rgba(255,255,255,0.04)', fontSize:12, fontFamily:'"Inter",sans-serif' }}>
                 <span style={{ color:'#888888' }}>{l}</span>
@@ -247,7 +249,12 @@ export function Step2Audio({ onContinue, onSkip, audioResult, setAudioResult }) 
               Start Tap Test
             </button>
           )}
-          {recState==='done' && (
+          {recState==='recording' && (
+            <div style={{ textAlign:'center', color:'#E5B842', fontSize:13, fontWeight:600, fontFamily:'"Inter",sans-serif', padding:'8px 0' }}>
+              Recording… {Math.round(progress * 100)}% — hold still
+            </div>
+          )}
+          {(recState==='done' || recState==='error') && (
             <div style={{ display:'flex', gap:10 }}>
               <button onClick={reset} style={{ flex:1, padding:'11px', borderRadius:8, border:'1px solid rgba(255,255,255,0.12)', background:'transparent', color:'#CCCCCC', fontWeight:600, fontSize:14, cursor:'pointer', transition:'all 200ms ease', fontFamily:'"Inter",sans-serif' }}>Re-record</button>
               <button onClick={onContinue} style={{ flex:1, padding:'11px', borderRadius:8, background:'#E5B842', border:'none', color:'#111111', fontWeight:600, fontSize:14, cursor:'pointer', transition:'all 200ms ease', fontFamily:'"Inter",sans-serif' }}>Continue →</button>
@@ -362,7 +369,7 @@ export function Step3Declare({ details, setDetails, onContinue }) {
           {/* Purchase year */}
           <div>
             <label style={{fontSize:12,fontWeight:600,color:C.muted,letterSpacing:'0.8px',textTransform:'uppercase',display:'block',marginBottom:8}}>Purchase Year <span style={{color:C.dim,fontWeight:400}}>(optional)</span></label>
-            <input type="number" placeholder="e.g. 2019" min="1950" max="2025"
+            <input type="number" placeholder="e.g. 2019" min="1950" max={new Date().getFullYear()}
               value={details.purchaseYear||''} onChange={e=>set('purchaseYear',e.target.value)}
               style={{width:'100%',background:C.inputBg,border:`1.5px solid ${C.inputBorder}`,borderRadius:10,
                 padding:'12px 14px',fontSize:15,color:'#F0F0F0',outline:'none',fontFamily:'monospace',boxSizing:'border-box',transition:'border-color 200ms ease'}}

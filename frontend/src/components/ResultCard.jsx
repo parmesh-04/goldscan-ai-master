@@ -80,7 +80,7 @@ export default function ResultCard({ result, getPurityLabel }) {
         color: ds.color,
         letterSpacing: '0.02em',
       }}>
-        {decisionText[result.fusion.loanDecision]}
+        {decisionText[result.fusion?.loanDecision] ?? 'Assessment complete — please review results'}
       </div>
     </section>
   );

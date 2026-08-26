@@ -92,6 +92,15 @@ export default function ScanPage() {
         formData.append('self_reported_weight', details.selfReportedWeight || '');
         formData.append('audio_performed', audioResult ? 'true' : 'false');
 
+        // Send the audio scalars to the backend for Bayesian fusion.
+        // We intentionally strip waveformData — the server only needs the
+        // derived scalars (materialClass, confidence, freq, qProxy).
+        // This keeps the payload under 256 bytes even on slow connections.
+        if (audioResult) {
+          const { waveformData: _drop, decayDescription: _drop2, ...audioScalars } = audioResult;
+          formData.append('audio_result', JSON.stringify(audioScalars));
+        }
+
         const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
         const res = await fetch(`${apiUrl}/analyze`, {
           method: 'POST',

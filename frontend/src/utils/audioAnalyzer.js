@@ -1,4 +1,10 @@
+// Hard cap: never record more than 5 seconds regardless of what the caller requests.
+// This prevents a crafted call from producing an arbitrarily large waveformData array
+// or holding the microphone open indefinitely.
+const MAX_RECORDING_MS = 5_000;
+
 export async function recordAndAnalyze(durationMs = 3000, onTick = () => {}) {
+  const safeDuration = Math.min(durationMs, MAX_RECORDING_MS);
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error('Microphone capture is unavailable in this browser.');
   }
@@ -16,7 +22,7 @@ export async function recordAndAnalyze(durationMs = 3000, onTick = () => {}) {
     onTick(Math.min(1, (Date.now() - startedAt) / durationMs));
   }, 120);
 
-  await new Promise((resolve) => setTimeout(resolve, durationMs));
+  await new Promise((resolve) => setTimeout(resolve, safeDuration));
   clearInterval(timer);
   onTick(1);
 
@@ -56,14 +62,24 @@ export async function recordAndAnalyze(durationMs = 3000, onTick = () => {}) {
     confidence = 0.45;
   }
 
-  return {
+  // Trim waveformData to 64 samples — enough for UI display, keeps JSON ≤ ~600 bytes.
+  // Full 1024-bin data is never sent to the server; only the derived scalars are.
+  const result = {
     fundamentalFreq: Math.max(1, Math.round(fundamentalFreq)),
     qProxy: Math.round(qProxy * 100) / 100,
     materialClass,
     confidence,
     decayDescription: qProxy < 0.15 ? 'Fast (dense metal)' : 'Slow (hollow or base metal)',
-    waveformData: Array.from(dataArray.slice(0, 100))
+    waveformData: Array.from(dataArray.slice(0, 64)),
   };
+
+  // Sanity check: if somehow the JSON is unexpectedly large, strip waveformData
+  // before returning so the caller never sends a bloated payload to the backend.
+  if (JSON.stringify(result).length > 4_096) {
+    result.waveformData = [];
+  }
+
+  return result;
 }
 
 export function demoAudioResult() {

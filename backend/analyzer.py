@@ -229,9 +229,17 @@ Respond only with the JSON structure matching the schema.
 # Core analysis function with timeout + exponential-backoff retry
 # ---------------------------------------------------------------------------
 
-# Retry on transient network/rate-limit errors: up to 3 attempts, 1s→4s→16s backoff
+# Retry ONLY on transient network/rate-limit errors.
+# Exceptions that indicate a programming or config error (invalid key, schema
+# mismatch, quota permanently exhausted) should NOT be retried — they will just
+# waste time and mask the real failure.
+# We include the built-in network exception types; google-api-core exceptions
+# (ServiceUnavailable, ResourceExhausted) would also be ideal but require an
+# extra dependency, so we cover them via the generic OSError/ConnectionError.
+_RETRYABLE = (ConnectionError, TimeoutError, OSError)
+
 @retry(
-    retry=retry_if_exception_type(Exception),
+    retry=retry_if_exception_type(_RETRYABLE),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=16),
     before_sleep=before_sleep_log(logger, logging.WARNING),
