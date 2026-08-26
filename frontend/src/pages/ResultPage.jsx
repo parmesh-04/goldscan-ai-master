@@ -181,6 +181,10 @@ function ResultPageContent() {
               <p className="leading-7 text-textSecondary">{reasoning}</p>
             </section>
 
+            {result.fusion?.purityPosterior?.length > 0 && (
+              <PurityChart data={result.fusion.purityPosterior} />
+            )}
+
             <FraudFlags flags={risk === 'LOW' ? [] : (result.fusion?.flags || [])} />
           </div>
 
